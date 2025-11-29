@@ -2,10 +2,10 @@ import os
 import requests
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler
-from dotenv import load_dotenv
+
 
 # --- CONFIGURATION ---
-load_dotenv()
+
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 BIRDEYE_API_KEY = os.getenv("BIRDEYE_API_KEY")
 HELIUS_API_KEY = os.getenv("HELIUS_API_KEY")
