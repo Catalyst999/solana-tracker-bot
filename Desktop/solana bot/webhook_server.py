@@ -1,85 +1,68 @@
 import os
 import requests
+import json
 from flask import Flask, request, jsonify
+from bot import telegram_bot, handle_updates, start_command, monitor_command
 
-from telegram import Bot # NEW IMPORT
+# --- Environment Setup (Uses Render Variables) ---
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+HOSTING_URL = os.environ.get("HOSTING_URL")
 
-# --- CONFIGURATION & SETUP ---
-
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-# HOSTING_URL is the permanent public address the service will assign (e.g., https://mybot.render.com)
-# It will be set as an environment variable on the hosting platform.
-HOSTING_URL = os.getenv("HOSTING_URL")
-
+# --- Flask App Initialization ---
 app = Flask(__name__)
-bot = Bot(TELEGRAM_TOKEN) # Initialize Telegram Bot object
+PORT = 10000 # Standard port for Render
 
-def send_telegram_alert(message):
-    # ... (function remains the same)
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": message,
-        "parse_mode": "Markdown",
-        "disable_web_page_preview": True
-    }
-    requests.post(url, json=payload)
-
-@app.route('/helius', methods=['POST'])
-def helius_webhook():
-    """Receives transaction data from Helius"""
-    # ... (function remains the same)
-    try:
-        data = request.json
-        print("Received Helius Webhook Request!")
-        
-        if isinstance(data, list):
-            for tx in data:
-                description = tx.get('description', 'New Activity Detected')
-                signature = tx.get('signature', 'N/A')
-                
-                alert_msg = (
-                    f"🚨 **SMART MONEY ALERT** 🚨\n\n"
-                    f"**Activity:** {description}\n"
-                    f"**Tx:** [View on Solscan](https://solscan.io/tx/{signature})"
-                )
-                send_telegram_alert(alert_msg)
-        
-        return jsonify({"status": "success"}), 200
-    except Exception as e:
-        print(f"Error: {e}")
-        return jsonify({"status": "error"}), 500
-
-@app.route('/telegram', methods=['POST'])
-def telegram_webhook():
-    """Receives command updates from Telegram"""
-    update_data = request.get_json(force=True)
-    # The actual processing of the update happens in bot.py logic
-    
-    # In a full deployment, you'd integrate the bot logic here.
-    # For now, we return 200 to acknowledge receipt.
-    return jsonify({'status': 'ok'}), 200
-
+# --- Webhook Setup Function ---
 def set_telegram_webhook():
-    """Sets the Telegram webhook URL."""
-    webhook_url = f'{HOSTING_URL}/telegram'
+    """Sets the Telegram webhook to the Render URL."""
+    if not TELEGRAM_TOKEN or not HOSTING_URL:
+        print("ERROR: TELEGRAM_TOKEN or HOSTING_URL not set in environment.")
+        return False
+        
+    webhook_url = f"{HOSTING_URL}/{TELEGRAM_TOKEN}"
+    api_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/setWebhook"
+    
     try:
-        if not HOSTING_URL:
-             print("HOSTING_URL is not set. Skipping Telegram webhook setup.")
-             return
-             
-        response = requests.get(
-            f'https://api.telegram.org/bot{TELEGRAM_TOKEN}/setWebhook?url={webhook_url}'
-        )
-        if response.json().get('ok'):
+        response = requests.post(api_url, data={'url': webhook_url})
+        response.raise_for_status() # Raise an exception for bad status codes
+        
+        data = response.json()
+        if data.get("ok"):
             print(f"✅ Telegram Webhook set to: {webhook_url}")
+            return True
         else:
-            print(f"❌ Failed to set Telegram Webhook: {response.text}")
-    except Exception as e:
-        print(f"Error during Telegram webhook setup: {e}")
+            print(f"❌ Failed to set webhook. Response: {data.get('description')}")
+            return False
+            
+    except requests.exceptions.RequestException as e:
+        print(f"❌ Error setting webhook: {e}")
+        return False
 
+# --- Flask Routes ---
+
+@app.route(f'/{TELEGRAM_TOKEN}', methods=['POST'])
+def telegram_webhook():
+    """Handles incoming Telegram updates."""
+    if request.method == 'POST':
+        update = request.get_json()
+        if update:
+            handle_updates(update)
+            return jsonify({'status': 'ok'}), 200
+        return jsonify({'status': 'invalid update'}), 400
+
+@app.route('/')
+def index():
+    """A simple index page for Render health check."""
+    return 'Solana Token Tracker Bot Running', 200
+
+# --- App Entry Point ---
 if __name__ == '__main__':
-    # This block is only for local testing, not for production deployment with Gunicorn
-    set_telegram_webhook()
-    app.run(port=5000)
+    # Set the webhook before starting the server
+    if set_telegram_webhook():
+        # Running Gunicorn in production handles starting the web server.
+        # This section is mainly for local testing or initial setup verification.
+        print(f"Starting Flask server on port {PORT}...")
+        # In a production environment like Render, gunicorn is responsible for running the server
+        # app.run(host='0.0.0.0', port=PORT) 
+    else:
+        print("Webhook failed to set. Server will not run.")
